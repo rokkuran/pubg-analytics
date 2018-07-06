@@ -10,9 +10,9 @@ using Plots
 pyplot()
 
 
-# TODO: not sure if parametrising type is a good idea
+
 function create_id_nodename_map(node_names::AbstractArray{T}) where T
-  id_name_map = Dict{Int64, T}()
+  id_name_map = Dict{Int8, T}()
   for (i, c) in enumerate(node_names)
       id_name_map[i] = c
   end
@@ -28,10 +28,12 @@ function add_edges!(G, node_edge_map, name_id_map; verbose::Bool=false)
 end
 
 
+create_df_map(df::DataFrame, a::T, b::T) where T <: Symbol = Dict(zip(df[a], df[b]))
+
+
 function team_maps(df::DataFrame)
-  killer_team_map = Dict(zip(df[:killer], df[:killer_team_id]))
-  victim_team_map = Dict(zip(df[:victim], df[:victim_team_id]))
-  killer_team_map, victim_team_map
+  column_pairs = [[:killer, :killer_team_id], [:victim, :victim_team_id]]
+  [create_df_map(df, a, b) for (a, b) in column_pairs]
 end
 
 
@@ -46,7 +48,6 @@ end
 
 
 function build_graph(df::DataFrame)
-
   node_edge_map = zip(df[:killer], df[:victim])
   id_player_map, player_id_map = player_id_maps(df)
 
@@ -66,11 +67,7 @@ end
 
 function player_kill_counts(df)
   players = get_players(df)
-
-  player_kills = Dict{String, Float64}()
-  for player in players
-    player_kills[player] = 0
-  end
+  player_kills = Dict(zip(players, zeros(Int8, length(players))))
 
   for k in df[:killer]   
     player_kills[k] += 1
@@ -85,7 +82,7 @@ team_colour_map(n_teams) = get(ColorSchemes.rainbow, collect(linspace(0, 1, n_te
 
 function player_team_colour_map(players, player_team_map, team_colours)
 
-  player_team_colour = Dict()
+  player_team_colour = Dict{String, RGB{Float64}}()
   for player in players
     team_id = player_team_map[player]
     if team_id == 0
@@ -105,7 +102,8 @@ function generate_graph_plot(G::AbstractGraph, player_kills, id_player_map, play
   loc_x, loc_y = spring_layout(G)
 
   node_sizes = [player_kills[id_player_map[i]] + 1 for i in 1:nv(G)]  # add one to offset zero sized nodes
-  node_sizes .^= 0.3  # zoom factor
+  # node_sizes .^= 0.3  # zoom factor
+  node_sizes = node_sizes .^ 0.5
 
   draw(
     PNG(output, (1920 - 1920 * 0.1)*2px, (1080 - 1080 * 0.1)*2px),
@@ -125,7 +123,8 @@ end
 
 
 function main()
-  match_id = "64c6a84d-49b4-4c6c-943e-26bc8676b611"
+  # match_id = "64c6a84d-49b4-4c6c-943e-26bc8676b611"
+  match_id = "1859feb8-e65e-46eb-9ef0-555082002695"
   filename = "pubg_kill_events_$(match_id).csv"
 
   path_kill_events = "c:/workspace/pubg-analytics/output/$filename"
