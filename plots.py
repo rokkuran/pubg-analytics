@@ -130,11 +130,13 @@ def plot_distance_from_zone_player_comparison(dataset, name):
   """"""
   all_participants = dataset.player_positions.keys()
   winners = dataset.get_winners()  # TODO: make property?
+  team = dataset.get_team(name)
 
   plt.style.use("dark_background")
 
   winner_label_used = False
   rest_label_used = False
+  teammate_label_used = False
 
   fig, ax = plt.subplots(figsize=(14, 9))
   for i, player in enumerate(all_participants):
@@ -142,29 +144,36 @@ def plot_distance_from_zone_player_comparison(dataset, name):
     
     if player in winners:
       # http://www.flatuicolorpicker.com/category/orange
-      colour = '#F5AB35'  # lightning yellow
+      # colour = '#F5AB35'  # lightning yellow
+      colour = '#F62459'  # radical red
       zorder = 200
       label = 'winners'
       
       if winner_label_used:
         label = None
-      
       winner_label_used = True
         
     elif player == name:
-      colour = '#f03434'  # cinnabar
+      colour = '#22A7F0'  # picton blue
       zorder = 300
       label = player
+    
+    elif player in team:
+      colour = '#2ECC71'  # shamrock
+      zorder = 250
+      label = 'teammates'
+      
+      if teammate_label_used:
+        label = None
+      teammate_label_used = True
 
     else:
       colour = 'grey'
       zorder = i
       label = 'rest'
-      # label = None
 
       if rest_label_used:
         label = None
-      
       rest_label_used = True
 
     ax.plot(
@@ -201,7 +210,12 @@ def plot_distance_from_zone_player_comparison(dataset, name):
 
 
 if __name__ in "__main__":
-  match_id = "68a03b73-8b2f-4f2c-9202-768a5e43d2ea"
+  # match_id = "68a03b73-8b2f-4f2c-9202-768a5e43d2ea"
+  match_id = "2a0346f6-2493-4deb-beb3-151af50ecf19"  # squad/erangel
+  # match_id = "1deb2118-557e-4945-a8e1-81ae70bf62e3"
+  # match_id = "42f94823-1e69-423e-983a-02f0973c9534"  # duo/sanhok
+  # match_id = "1859feb8-e65e-46eb-9ef0-555082002695"  # squad/sanhok
+  
   dataset = dataset.Dataset(match_id)
 
   # print(dataset.get_team('eponymoose'))
