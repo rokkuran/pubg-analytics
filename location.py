@@ -28,7 +28,20 @@ MAP_SCALE_FACTOR = {
 }
 
 
-class PlayerLocationHistory(object):
+class API:
+  def __init__(self, shard):
+    config = yaml.safe_load(open('config.yml'))
+    self.api = PUBG(config['API_KEY'], shard)
+
+
+class Match(API):
+  def __init__(self, match_id, shard=Shard.PC_OC):
+    API.__init__(self, shard)
+    self.match_id = match_id
+    self.match = self.api.matches().get(match_id)
+
+
+class Player:
   """"""
   def __init__(self, name):
     self.name = name
@@ -42,140 +55,157 @@ class PlayerLocationHistory(object):
     self.z.append(z)
 
 
-def participant_names(roster):
-  return [participant.name for participant in roster.participants]
-
-
-def get_team(match_id, player_name):
+class Telemetry(Match):
   """"""
-  match = api.matches().get(match_id)
-  rosters = match.rosters
+  def __init__(self, match_id):
+    Match.__init__(self, match_id)
 
-  for roster in rosters:
-    names = participant_names(roster)
-    if player_name in names:
-      return names
+    self.asset = self.match.assets[0]
+    self.telemetry = self.api.telemetry(self.asset.url)
+
+    self.players = {}
+    
+    self._log_game_states = None
+    self._game_states = None
+
+    self._log_player_positions = None
+    self._player_positions = None
+
+    self._zones = None
+    self._sz_t = None
+
+  @property
+  def game_states(self):
+    """"""
+    if self._log_game_states is None:
+      self._log_game_states = self.telemetry.events_from_type('LogGameStatePeriodic')
+
+    if self._game_states is None:
+      data = []
+      for gs in self._log_game_states:
+
+        data.append([
+          gs.game_state.elapsed_time, 
+          gs.game_state.num_alive_teams, 
+          gs.game_state.num_alive_players,
+          gs.game_state.safety_zone_position['x'],
+          gs.game_state.safety_zone_position['y'],
+          gs.game_state.safety_zone_position['z'],
+          gs.game_state.safety_zone_radius,
+          gs.game_state.poison_gas_warning_position['x'],
+          gs.game_state.poison_gas_warning_position['y'],
+          gs.game_state.poison_gas_warning_radius
+        ])
+
+      header = (
+        'elapsed_time_s', 
+        'num_alive_teams',
+        'num_alive_players',
+        'safety_zone_position_x',
+        'safety_zone_position_y',
+        'safety_zone_position_z',
+        'safety_zone_radius',
+        'poison_gas_warning_position_x',
+        'poison_gas_warning_position_y',
+        'poison_gas_warning_radius'
+      )
+
+      self._game_states = pd.DataFrame(data, columns=header)
+
+    return self._game_states
+
+  @property
+  def player_positions(self):
+    """"""
+    if self._log_player_positions is None:
+      self._log_player_positions = self.telemetry.events_from_type('LogPlayerPosition')
+
+    if self._player_positions is None:
+      self._player_positions = {}
+      for p in self._log_player_positions:
+        if p.elapsed_time > 0:
+          name = p.character.name
+          if name not in self._player_positions:
+            self._player_positions[name] = Player(name)
+          
+          self._player_positions[name].update(p.character.location.x, p.character.location.y, p.character.location.z)
+      
+    return self._player_positions
+
+  @property
+  def zones(self):
+    """
+    Returns dict of time: (x, y, r) 
+    where x, y are circle centre and r is the radius.
+    time is in seconds; x, y, r are unscaled.
+    """
+
+    if self._zones is None:
+      self._zones = {}
+
+      previous_r = 0
+      for i, row in self.game_states.iterrows():
+        r = row['safety_zone_radius']
+
+        if r == previous_r:
+          xyr = [row['safety_zone_position_x'], row['safety_zone_position_y'], r]
+
+          if xyr not in self._zones.values():
+            self._zones[row['elapsed_time_s']] = xyr
+
+        previous_r = r
+
+    return self._zones
+
+  def _participant_names(self, roster):
+    return [participant.name for participant in roster.participants]
+
+  def get_team(self, name):
+    rosters = self.match.rosters
+
+    for roster in rosters:
+      names = self._participant_names(roster)
+      if name in names:
+        return names
+
+  @property
+  def sz_t(self):
+    """
+    Safety zone positions by time.
+    returns dict - time: (x, y, r)
+    """
+    if self._sz_t is None:
+
+      xyr = zip(
+        self.game_states.safety_zone_position_x, 
+        self.game_states.safety_zone_position_y, 
+        self.game_states.safety_zone_radius)
+
+      self._sz_t = dict(zip(self.game_states.elapsed_time_s, xyr))
+
+    return self._sz_t
+
+  def p_t(name):
+    xy = zip(telemetry.player_positions[name].x, telemetry.player_positions[name].y)
+    return dict(zip(telemetry.player_positions[name].t, xy))
 
 
-def get_winners(rosters):
-  for i, roster in enumerate(rosters):
-    if roster.won == 'true':
-      return i, participant_names(roster)
-
-
-# TODO: make argument telemetry instead of match_id
-def get_game_state_history(match_id):
-  """"""
-  match = api.matches().get(match_id)
-  asset = match.assets[0]
-  telemetry = api.telemetry(asset.url)
-
-  log_game_state = telemetry.events_from_type('LogGameStatePeriodic')
-
-  game_state_history = []
-  for gs in log_game_state:
-
-    game_state_history.append([
-      gs.game_state.elapsed_time, 
-      round(gs.game_state.elapsed_time / 60), 
-      gs.game_state.num_alive_teams, 
-      gs.game_state.num_alive_players,
-      round(gs.game_state.safety_zone_position['x']),
-      round(gs.game_state.safety_zone_position['y']),
-      round(gs.game_state.safety_zone_position['z']),
-      round(gs.game_state.safety_zone_radius),
-      round(gs.game_state.poison_gas_warning_position['x']),
-      round(gs.game_state.poison_gas_warning_position['y']),
-      round(gs.game_state.poison_gas_warning_radius)
-    ])
-
-  header = (
-    'elapsed_time_s', 
-    'elapsed_time_m', 
-    'num_alive_teams',
-    'num_alive_players',
-    'safety_zone_position_x',
-    'safety_zone_position_y',
-    'safety_zone_position_z',
-    'safety_zone_radius',
-    'poison_gas_warning_position_x',
-    'poison_gas_warning_position_y',
-    'poison_gas_warning_radius'
-  )
-
-  return pd.DataFrame(game_state_history, columns=header)
-
-
-def get_zones(df):
-  """"""
-  zones = []
-
-  # for i in range(2, len(df)):
-  #   if df.safety_zone_radius[i] == df.safety_zone_radius[i-1]:
-  #     xyr = [df.safety_zone_position_x[i], df.safety_zone_position_x[i], df.safety_zone_radius[i]]
-  #     if xyr not in zones:
-  #       zones.append(xyr)
-
-  # using poison gas warnings
-  for i in range(2, len(df)):
-    if df.poison_gas_warning_radius[i] == df.poison_gas_warning_radius[i-1]:
-      xyr = [df.poison_gas_warning_position_x[i], df.poison_gas_warning_position_y[i], df.poison_gas_warning_radius[i]]
-      if xyr not in zones:
-        zones.append(xyr)
-
-  return zones
-
-
-
-if __name__ in "__main__":
-
-  config = yaml.safe_load(open('config.yml'))
-  API_KEY = config['API_KEY']
-  api = PUBG(API_KEY, Shard.PC_OC)
-
-  # match_id = "00c10698-6e0a-40f5-8e78-083696d199d8"  # miramar/squad
-  # match_id = "2a0346f6-2493-4deb-beb3-151af50ecf19"  # erangel/squad
-  # match_id = "1859feb8-e65e-46eb-9ef0-555082002695"  # sanhok/squad
-  # match_id = "1e22f335-8e59-4e1f-ad50-f85bd66fb244"  # erangel/squad
-  # match_id = "b2a0a46b-df3c-40fe-8622-15baa76d78b5"  # miramar/squad
-  match_id = "68a03b73-8b2f-4f2c-9202-768a5e43d2ea"  # sanhok/squad
-
-  match = api.matches().get(match_id)
-  print(match.map)
-
-  asset = match.assets[0]
-  telemetry = api.telemetry(asset.url)
-
-  log_player_positions = telemetry.events_from_type('LogPlayerPosition')
-
-  player_name = "eponymoose"
-  team = get_team(match_id, player_name)
-  print(team)
-
-  players = {name: PlayerLocationHistory(name) for name in team}
-  for p in log_player_positions:
-    if p.elapsed_time > 0:
-      if p.character.name in team:
-        players[p.character.name].update(p.character.location.x, p.character.location.y, p.character.location.z)
-
-  # game state manipulation
-  game_state_history = get_game_state_history(match_id)
-  zones = get_zones(game_state_history)
-
-  # plotting begins
+def plot_location_overlay(telemetry, players):
+   # plotting begins
   img_px = 1364
-  scaling_factor = MAP_SCALE_FACTOR[match.map]
+  scaling_factor = MAP_SCALE_FACTOR[telemetry.match.map]
   colours = ['magenta', 'y', 'cyan', 'lime']
   dpi = 96
 
   fig, ax = plt.subplots(figsize=(img_px/dpi, img_px/dpi), dpi=dpi)
   ax.axis('off')
 
-  img = plt.imread(MAP_IMG[match.map])
+  # TODO: match shouldn't be under telemetry?
+  img = plt.imread(MAP_IMG[telemetry.match.map])
   ax.imshow(img)
 
   # add zone circles
-  for (x, y, r) in zones:
+  for (x, y, r) in telemetry.zones.values():
     ax.add_artist(
       plt.Circle(
         (x / scaling_factor, y / scaling_factor), r / scaling_factor, 
@@ -184,22 +214,33 @@ if __name__ in "__main__":
       )
     )
 
-  for i, player in enumerate(team):
+  for i, player in enumerate(players):
     ax.plot(
-      np.array(players[player].x) / scaling_factor, 
-      np.array(players[player].y) / scaling_factor, 
-      ls='-', lw=1, color=colours[i], label=player
-    )
+      np.array(telemetry.player_positions[player].x) / scaling_factor, 
+      np.array(telemetry.player_positions[player].y) / scaling_factor, 
+      ls='-', lw=1
+    )#, color=colours[i], label=player
 
   ax.grid(False)
   plt.xlim(0, img_px)
   plt.ylim(img_px, 0)
 
-  l = ax.legend(loc='lower left')
-  for i, text in enumerate(l.get_texts()):
-    text.set_color(colours[i])
-
   fig.subplots_adjust(bottom=0, top=1, left=0, right=1)
 
-  output_path = 'c:/workspace/pubg-analytics/output/location_history_{}.png'.format(match_id)
+  output_path = 'c:/workspace/pubg-analytics/output/location_history_{}.png'.format(telemetry.match_id)
   plt.savefig(output_path, dpi=dpi)
+
+
+
+if __name__ in "__main__":
+  match_id = "68a03b73-8b2f-4f2c-9202-768a5e43d2ea"
+
+  telemetry = Telemetry(match_id)
+
+  # print(telemetry.game_states)
+  # print(telemetry.player_positions)
+  # print(telemetry.zones)
+
+  print(telemetry.get_team('eponymoose'))
+
+  plot_location_overlay(telemetry, telemetry.get_team('eponymoose'))
