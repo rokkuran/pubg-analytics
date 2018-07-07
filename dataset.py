@@ -1,44 +1,12 @@
-import csv
-import yaml
+from common import Match
 
 import numpy as np
 import pandas as pd
-
-from pubg_python import PUBG, Shard
-from datetime import datetime
 
 import matplotlib.pyplot as plt
 import seaborn as sns
 sns.set_style("whitegrid")
 
-
-
-IMG_DIR = "c:/workspace/pubg-analytics/img"
-
-MAP_IMG = {
-  "Desert_Main": "{}/miramar_map.jpg".format(IMG_DIR),
-  "Erangel_Main": "{}/erangel_map.jpg".format(IMG_DIR),
-  "Savage_Main": "{}/sanhok_map.jpg".format(IMG_DIR)
-}
-
-MAP_SCALE_FACTOR = {
-  "Desert_Main": 600,
-  "Erangel_Main": 600,
-  "Savage_Main": 300
-}
-
-
-class API:
-  def __init__(self, shard):
-    config = yaml.safe_load(open('config.yml'))
-    self.api = PUBG(config['API_KEY'], shard)
-
-
-class Match(API):
-  def __init__(self, match_id, shard=Shard.PC_OC):
-    API.__init__(self, shard)
-    self.match_id = match_id
-    self.match = self.api.matches().get(match_id)
 
 
 class Player:
@@ -48,14 +16,16 @@ class Player:
     self.x = []
     self.y = []
     self.z = []
+    self.t = []
   
-  def update(self, x, y, z):
+  def update(self, t, x, y, z):
     self.x.append(x)
     self.y.append(y)
     self.z.append(z)
+    self.t.append(t)
 
 
-class Telemetry(Match):
+class Dataset(Match):
   """"""
   def __init__(self, match_id):
     Match.__init__(self, match_id)
@@ -128,7 +98,11 @@ class Telemetry(Match):
           if name not in self._player_positions:
             self._player_positions[name] = Player(name)
           
-          self._player_positions[name].update(p.character.location.x, p.character.location.y, p.character.location.z)
+          self._player_positions[name].update(
+            p.elapsed_time, 
+            p.character.location.x, 
+            p.character.location.y, 
+            p.character.location.z)
       
     return self._player_positions
 
@@ -167,6 +141,11 @@ class Telemetry(Match):
       names = self._participant_names(roster)
       if name in names:
         return names
+  
+  def get_winners(self):
+    for i, roster in enumerate(self.match.rosters):
+      if roster.won == 'true':
+        return self._participant_names(roster)
 
   @property
   def sz_t(self):
@@ -185,62 +164,43 @@ class Telemetry(Match):
 
     return self._sz_t
 
-  def p_t(name):
-    xy = zip(telemetry.player_positions[name].x, telemetry.player_positions[name].y)
-    return dict(zip(telemetry.player_positions[name].t, xy))
+  def p_t(self, name):
+    xy = zip(self.player_positions[name].x, self.player_positions[name].y)
+    return dict(zip(self.player_positions[name].t, xy))
 
+  def zone_edge_distance_t(self, name):
+    """"""
+    p_t = self.p_t(name)
 
-def plot_location_overlay(telemetry, players):
-   # plotting begins
-  img_px = 1364
-  scaling_factor = MAP_SCALE_FACTOR[telemetry.match.map]
-  colours = ['magenta', 'y', 'cyan', 'lime']
-  dpi = 96
+    distance_from_zone_edge = []
 
-  fig, ax = plt.subplots(figsize=(img_px/dpi, img_px/dpi), dpi=dpi)
-  ax.axis('off')
+    t_min = min(self.sz_t.keys())
+    last_zone = self.sz_t[t_min]
 
-  # TODO: match shouldn't be under telemetry?
-  img = plt.imread(MAP_IMG[telemetry.match.map])
-  ax.imshow(img)
+    for i in range(t_min, max(p_t.keys())):      
 
-  # add zone circles
-  for (x, y, r) in telemetry.zones.values():
-    ax.add_artist(
-      plt.Circle(
-        (x / scaling_factor, y / scaling_factor), r / scaling_factor, 
-        fill=False, 
-        ec='white'
-      )
-    )
+      if i in self.sz_t:
+        last_zone = self.sz_t[i]
 
-  for i, player in enumerate(players):
-    ax.plot(
-      np.array(telemetry.player_positions[player].x) / scaling_factor, 
-      np.array(telemetry.player_positions[player].y) / scaling_factor, 
-      ls='-', lw=1
-    )#, color=colours[i], label=player
+      if i in p_t:
+        zx, zy, zr = last_zone
+        px, py = p_t[i]
+        d = np.sqrt((px - zx)**2 + (py - zy)**2)  # distance from centre of zone
+        distance_from_zone_edge.append((i, zr - d))
 
-  ax.grid(False)
-  plt.xlim(0, img_px)
-  plt.ylim(img_px, 0)
-
-  fig.subplots_adjust(bottom=0, top=1, left=0, right=1)
-
-  output_path = 'c:/workspace/pubg-analytics/output/location_history_{}.png'.format(telemetry.match_id)
-  plt.savefig(output_path, dpi=dpi)
+    return np.array(distance_from_zone_edge)
 
 
 
 if __name__ in "__main__":
   match_id = "68a03b73-8b2f-4f2c-9202-768a5e43d2ea"
 
-  telemetry = Telemetry(match_id)
+  dataset = Dataset(match_id)
 
-  # print(telemetry.game_states)
-  # print(telemetry.player_positions)
-  # print(telemetry.zones)
+  # print(dataset.game_states)
+  # print(dataset.player_positions)
+  # print(dataset.zones)
 
-  print(telemetry.get_team('eponymoose'))
+  # print(dataset.get_team('eponymoose'))
 
-  plot_location_overlay(telemetry, telemetry.get_team('eponymoose'))
+  print(dataset.zone_edge_distance_t('eponymoose'))
