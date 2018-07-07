@@ -18,7 +18,7 @@
 
 
 ## Player Kill Graph
-
+Network of player kill interactions. Direction of edge reflects killer or victim. The image below is minimised, need to expand to view in detail.
 ![Player Kill Graph 1][kg_1]
 
 
