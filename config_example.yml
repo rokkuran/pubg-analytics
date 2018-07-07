@@ -1,1 +1,8 @@
 API_KEY: 'xxzyzyzyzzzyyyaxxx'
+
+IMG_DIR: "c:/workspace/pubg-analytics/img"
+
+MAP_SCALE_FACTOR:
+  Desert_Main: 600
+  Erangel_Main: 600
+  Savage_Main: 300
